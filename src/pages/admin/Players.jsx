@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { collection, getDocs, addDoc, doc, setDoc, writeBatch } from "firebase/firestore";
-import { db } from "../../firebase";
+import { collection, getDocs, addDoc, deleteDoc, doc, setDoc, writeBatch } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage } from "../../firebase";
 import Papa from "papaparse";
-import { Plus, Upload, Search, Trash2, User } from "lucide-react";
+import { Plus, Upload, Search, Trash2, User, Image as ImageIcon, Loader2 } from "lucide-react";
 
 export default function Players() {
     const [players, setPlayers] = useState([]);
@@ -10,6 +11,7 @@ export default function Players() {
     const [searchTerm, setSearchTerm] = useState("");
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [imageUploading, setImageUploading] = useState(false);
 
     // Form State
     const [newPlayer, setNewPlayer] = useState({
@@ -19,6 +21,7 @@ export default function Players() {
         division: "",
         contact: "",
         email: "",
+        photoUrl: "",
         primarySkills: "", // comma separated
         technicalEvents: "",
         nonTechnicalEvents: ""
@@ -78,8 +81,8 @@ export default function Players() {
                             currentBatch.set(playerRef, {
                                 enrollmentNo: row["Enrollment No"] || row.enrollmentNo || "N/A",
                                 name: row["Name"] || row.name || "Unknown",
-                                semester: row["Semester"] || row.semester || "",
-                                division: row["Division"] || row.division || "",
+                                semester: row["Semester"] || row.semester || row["Sem"] || row.sem || "",
+                                division: row["Division"] || row.division || row["Div"] || row.div || "",
                                 contact: row["Contact"] || row.contact || "",
                                 email: row["Email Address"] || row.email || "",
                                 technicalEvents: row["Technical Events"] ? row["Technical Events"].split(",").map(s => s.trim()) : [],
@@ -105,23 +108,92 @@ export default function Players() {
         });
     };
 
+    const handleImageUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // Validation - basic check
+        if (!file.type.startsWith("image/")) {
+            alert("Please upload an image file.");
+            return;
+        }
+
+        // Use enrollmentNo or a temp ID if not available yet (but prefer enrollmentNo or just allow random name)
+        // If creating new player, enrollmentNo might be typed in form.
+        const idForImage = newPlayer.enrollmentNo || Date.now().toString();
+
+        setImageUploading(true);
+        try {
+            const storageRef = ref(storage, `players/${idForImage}.jpg`);
+            await uploadBytes(storageRef, file);
+            const downloadURL = await getDownloadURL(storageRef);
+
+            setNewPlayer(prev => ({ ...prev, photoUrl: downloadURL }));
+        } catch (error) {
+            console.error("Error uploading image:", error);
+            alert("Failed to upload image.");
+        } finally {
+            setImageUploading(false);
+        }
+    };
+
     const handleAddPlayer = async (e) => {
         e.preventDefault();
         try {
-            await addDoc(collection(db, "players"), {
-                ...newPlayer,
+            const playerData = {
+                name: newPlayer.name,
+                enrollmentNo: newPlayer.enrollmentNo,
+                email: newPlayer.email,
+                contact: newPlayer.contact,
+                photoUrl: newPlayer.photoUrl || "",
+                semester: newPlayer.semester,
+                division: newPlayer.division,
                 primarySkills: newPlayer.primarySkills.split(",").map(s => s.trim()),
                 technicalEvents: newPlayer.technicalEvents.split(",").map(s => s.trim()),
                 nonTechnicalEvents: newPlayer.nonTechnicalEvents.split(",").map(s => s.trim()),
-                isAssigned: false,
-                createdAt: new Date().toISOString()
-            });
+            };
+
+            if (newPlayer.id) {
+                // Update
+                await setDoc(doc(db, "players", newPlayer.id), {
+                    ...playerData,
+                    updatedAt: new Date().toISOString()
+                }, { merge: true });
+            } else {
+                // Create
+                await addDoc(collection(db, "players"), {
+                    ...playerData,
+                    isAssigned: false,
+                    createdAt: new Date().toISOString()
+                });
+            }
+
             setIsModalOpen(false);
-            setNewPlayer({ name: "", enrollmentNo: "", semester: "", division: "", contact: "", email: "", primarySkills: "", technicalEvents: "", nonTechnicalEvents: "" });
+            setNewPlayer({ name: "", enrollmentNo: "", semester: "", division: "", contact: "", email: "", photoUrl: "", primarySkills: "", technicalEvents: "", nonTechnicalEvents: "" });
             fetchPlayers();
         } catch (error) {
-            console.error("Error adding player:", error);
-            alert("Failed to add player.");
+            console.error("Error saving player:", error);
+            alert("Failed to save player.");
+        }
+    };
+
+    const handleDeletePlayer = async (player) => {
+        if (!window.confirm(`Are you sure you want to delete ${player.name}?`)) return;
+
+        if (player.isAssigned) {
+            alert("Cannot delete an assigned player. Please remove them from their team first.");
+            return;
+        }
+
+        try {
+            await deleteDoc(doc(db, "players", player.id));
+            // Optional: Delete image from storage if we had the path. 
+            // We store full URL, so extracting path is tricky unless we stored ref. 
+            // We'll skip image delete for now to avoid complexity/errors, or just leave it orphan.
+            fetchPlayers();
+        } catch (error) {
+            console.error("Error deleting player:", error);
+            alert("Failed to delete player.");
         }
     };
 
@@ -173,13 +245,14 @@ export default function Players() {
                                 <th className="px-6 py-4 font-semibold text-gray-600">Class</th>
                                 <th className="px-6 py-4 font-semibold text-gray-600">Skills</th>
                                 <th className="px-6 py-4 font-semibold text-gray-600">Status</th>
+                                <th className="px-6 py-4 font-semibold text-gray-600">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {loading ? (
-                                <tr><td colSpan="5" className="px-6 py-8 text-center text-gray-500">Loading players...</td></tr>
+                                <tr><td colSpan="6" className="px-6 py-8 text-center text-gray-500">Loading players...</td></tr>
                             ) : filteredPlayers.length === 0 ? (
-                                <tr><td colSpan="5" className="px-6 py-8 text-center text-gray-500">No players found.</td></tr>
+                                <tr><td colSpan="6" className="px-6 py-8 text-center text-gray-500">No players found.</td></tr>
                             ) : (
                                 filteredPlayers.map((player) => (
                                     <tr key={player.id} className="hover:bg-gray-50 transition-colors">
@@ -204,6 +277,37 @@ export default function Players() {
                                                 {player.isAssigned ? "Assigned" : "Unassigned"}
                                             </span>
                                         </td>
+                                        <td className="px-6 py-4">
+                                            <button
+                                                onClick={() => {
+                                                    setNewPlayer({
+                                                        id: player.id,
+                                                        name: player.name || "",
+                                                        enrollmentNo: player.enrollmentNo || "",
+                                                        semester: player.semester || "",
+                                                        division: player.division || "",
+                                                        contact: player.contact || "",
+                                                        email: player.email || "",
+                                                        photoUrl: player.photoUrl || "",
+                                                        primarySkills: player.primarySkills?.join(", ") || "",
+                                                        technicalEvents: player.technicalEvents?.join(", ") || "",
+                                                        nonTechnicalEvents: player.nonTechnicalEvents?.join(", ") || ""
+                                                    });
+                                                    setIsModalOpen(true);
+                                                }}
+                                                className="text-gray-400 hover:text-blue-600 transition-colors mr-3"
+                                                title="Edit"
+                                            >
+                                                Edit
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeletePlayer(player)}
+                                                className="text-gray-400 hover:text-red-600 transition-colors"
+                                                title="Delete"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </td>
                                     </tr>
                                 ))
                             )}
@@ -212,12 +316,12 @@ export default function Players() {
                 </div>
             </div>
 
-            {/* Add Player Modal */}
+            {/* Add/Edit Player Modal */}
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden">
                         <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-                            <h3 className="text-xl font-bold">Add New Player</h3>
+                            <h3 className="text-xl font-bold">{newPlayer.id ? "Edit Player" : "Add New Player"}</h3>
                             <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600">✕</button>
                         </div>
                         <form onSubmit={handleAddPlayer} className="p-6 space-y-4">
@@ -237,6 +341,38 @@ export default function Players() {
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Contact</label>
                                     <input required className="w-full border rounded-lg p-2" value={newPlayer.contact} onChange={e => setNewPlayer({ ...newPlayer, contact: e.target.value })} />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Player Photo</label>
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-16 h-16 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center overflow-hidden flex-shrink-0">
+                                            {newPlayer.photoUrl ? (
+                                                <img src={newPlayer.photoUrl} alt="Preview" className="w-full h-full object-cover" />
+                                            ) : (
+                                                <User className="text-gray-400 w-8 h-8" />
+                                            )}
+                                        </div>
+                                        <div className="flex-grow">
+                                            <input
+                                                type="text"
+                                                className="w-full border rounded-lg p-2 text-sm mb-2"
+                                                placeholder="Enter URL manually or upload..."
+                                                value={newPlayer.photoUrl || ""}
+                                                onChange={e => setNewPlayer({ ...newPlayer, photoUrl: e.target.value })}
+                                            />
+                                            <label className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium cursor-pointer transition-colors">
+                                                {imageUploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImageIcon className="w-3 h-3" />}
+                                                {imageUploading ? "Uploading..." : "Upload Image"}
+                                                <input
+                                                    type="file"
+                                                    accept="image/*"
+                                                    className="hidden"
+                                                    onChange={handleImageUpload}
+                                                    disabled={imageUploading}
+                                                />
+                                            </label>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                     <div>
@@ -266,7 +402,9 @@ export default function Players() {
 
                             <div className="pt-4 flex justify-end gap-3">
                                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-                                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Player</button>
+                                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    {newPlayer.id ? "Update Player" : "Save Player"}
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -275,3 +413,4 @@ export default function Players() {
         </div>
     );
 }
+

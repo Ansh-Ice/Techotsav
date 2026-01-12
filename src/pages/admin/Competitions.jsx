@@ -17,8 +17,7 @@ export default function Competitions() {
     const [unsavedChanges, setUnsavedChanges] = useState({});
 
     useEffect(() => {
-        // Real-time listener for competitions to see score updates live? 
-        // Or just fetch once. For Vibe Coding, let's use real-time for scores to feel "alive".
+        const unsubscribeList = [];
 
         // 1. Fetch Teams
         getDocs(collection(db, "teams")).then(snap => {
@@ -27,20 +26,27 @@ export default function Competitions() {
 
         // 2. Listen to competitions
         const q = query(collection(db, "competitions"), orderBy("createdAt", "desc"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const unsubComp = onSnapshot(q, (snapshot) => {
             const comps = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             setCompetitions(comps);
-
-            // Initialize local scores state
-            const initialScores = {};
-            comps.forEach(c => {
-                initialScores[c.id] = c.scores || {};
-            });
-            setScores(initialScores);
             setLoading(false);
         });
+        unsubscribeList.push(unsubComp);
 
-        return () => unsubscribe();
+        // 3. Listen to Scores
+        // ideally we query by competition, but for real-time map of all scores:
+        const unsubScores = onSnapshot(collection(db, "scores"), (snapshot) => {
+            const scoreMap = {}; // { compId: { teamId: score } }
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                if (!scoreMap[data.competitionId]) scoreMap[data.competitionId] = {};
+                scoreMap[data.competitionId][data.teamId] = data.score;
+            });
+            setScores(scoreMap);
+        });
+        unsubscribeList.push(unsubScores);
+
+        return () => unsubscribeList.forEach(u => u());
     }, []);
 
     const handleCreateComp = async (e) => {
@@ -48,8 +54,7 @@ export default function Competitions() {
         try {
             await addDoc(collection(db, "competitions"), {
                 ...newComp,
-                createdAt: new Date().toISOString(),
-                scores: {} // Map: teamId -> number
+                createdAt: new Date().toISOString()
             });
             setIsModalOpen(false);
             setNewComp({ name: "", type: "TECHNICAL" });
@@ -73,12 +78,29 @@ export default function Competitions() {
 
     const saveScores = async (compId) => {
         try {
-            await updateDoc(doc(db, "competitions", compId), {
-                scores: scores[compId],
-                updatedAt: new Date().toISOString()
-            });
+            const batch = writeBatch(db);
+            const compScores = scores[compId] || {};
+
+            // We need to efficiently update or set scores. 
+            // Since we don't know the doc IDs easily (or we'd have to query them),
+            // a simple strategy is: 
+            // 1. Generate a predictable ID or query. 
+            // Predictable ID: `${compId}_${teamId}` is best for deduplication.
+
+            for (const teamId of Object.keys(compScores)) {
+                const scoreVal = compScores[teamId];
+                const scoreRef = doc(db, "scores", `${compId}_${teamId}`);
+                batch.set(scoreRef, {
+                    competitionId: compId,
+                    teamId: teamId,
+                    score: scoreVal,
+                    updatedAt: new Date().toISOString()
+                }, { merge: true });
+            }
+
+            await batch.commit();
             setUnsavedChanges(prev => ({ ...prev, [compId]: false }));
-            // alert("Scores saved!"); // Too intrusive, just visual feedback ideally
+
         } catch (error) {
             console.error("Error saving scores:", error);
             alert("Failed to save scores");

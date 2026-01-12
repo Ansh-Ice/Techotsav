@@ -1,149 +1,133 @@
 import { useState, useEffect } from "react";
 import { collection, onSnapshot, query, orderBy, getDocs } from "firebase/firestore";
 import { db } from "../../firebase";
-import { Trophy, Medal, Star, TrendingUp } from "lucide-react";
+import { Trophy, Medal, Crown } from "lucide-react";
 
 export default function Leaderboard() {
-    const [leaderboard, setLeaderboard] = useState([]);
     const [competitions, setCompetitions] = useState([]);
+    const [teams, setTeams] = useState({});
+    const [scores, setScores] = useState({});
     const [loading, setLoading] = useState(true);
+    const [selectedComp, setSelectedComp] = useState(null);
 
     useEffect(() => {
-        // 1. Fetch Teams
-        const teamsPromise = getDocs(collection(db, "teams"));
+        // 1. Fetch Teams Map (ID -> Name/Details)
+        // We only need names really.
+        getDocs(collection(db, "teams")).then(snap => {
+            const teamMap = {};
+            snap.docs.forEach(d => { teamMap[d.id] = d.data(); });
+            setTeams(teamMap);
+        });
 
-        // 2. Listen to Competitions
+        // 2. Real-time Competitions & Scores
         const q = query(collection(db, "competitions"), orderBy("createdAt", "desc"));
-        const unsubscribe = onSnapshot(q, async (snapshot) => {
-            const teamsSnap = await teamsPromise;
-            const teams = teamsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
+        const unsubComp = onSnapshot(q, (snapshot) => {
             const comps = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             setCompetitions(comps);
+            if (comps.length > 0 && !selectedComp) {
+                setSelectedComp(comps[0].id);
+            }
+        });
 
-            // Calculate Totals
-            const rankings = teams.map(team => {
-                let total = 0;
-                let tech = 0;
-                let nonTech = 0;
-
-                comps.forEach(comp => {
-                    const score = comp.scores?.[team.id] || 0;
-                    total += score;
-                    if (comp.type === "TECHNICAL") tech += score;
-                    else nonTech += score;
-                });
-
-                return {
-                    ...team,
-                    totalScore: total,
-                    techScore: tech,
-                    nonTechScore: nonTech
-                };
+        const unsubScores = onSnapshot(collection(db, "scores"), (snapshot) => {
+            const scoreMap = {}; // { compId: [ { teamId, score } ] }
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                if (!scoreMap[data.competitionId]) scoreMap[data.competitionId] = [];
+                scoreMap[data.competitionId].push({ teamId: data.teamId, score: data.score });
             });
-
-            // Sort by Total Score
-            setLeaderboard(rankings.sort((a, b) => b.totalScore - a.totalScore));
+            setScores(scoreMap);
             setLoading(false);
         });
 
-        return () => unsubscribe();
+        return () => {
+            unsubComp();
+            unsubScores();
+        };
     }, []);
 
-    const getRankIcon = (index) => {
-        switch (index) {
-            case 0: return <Trophy className="text-yellow-500" size={32} />;
-            case 1: return <Medal className="text-gray-400" size={28} />;
-            case 2: return <Medal className="text-amber-700" size={28} />;
-            default: return <span className="text-xl font-bold text-gray-400">#{index + 1}</span>;
-        }
+    // Derived Leaderboard
+    const getLeaderboard = (compId) => {
+        if (!compId || !scores[compId]) return [];
+        return scores[compId]
+            .map(s => ({
+                ...s,
+                teamName: teams[s.teamId]?.name || "Unknown Team",
+                // we could add owner/icon info here if we fetched teamPlayers
+            }))
+            .sort((a, b) => b.score - a.score);
     };
 
+    const currentLeaderboard = getLeaderboard(selectedComp);
+
+    if (loading) return <div className="min-h-screen flex items-center justify-center">Loading Leaderboard...</div>;
+
     return (
-        <div className="space-y-12">
-            {/* Hero Section */}
-            <div className="text-center space-y-4 py-8">
-                <h1 className="text-5xl font-extrabold bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <div className="text-center mb-12">
+                <h1 className="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600 mb-4">
                     Techotsav Leaderboard
                 </h1>
-                <p className="text-gray-600 text-lg max-w-2xl mx-auto">
-                    Live standings for the ultimate tech showdown. Watch the teams battle for glory in technical and non-technical events.
-                </p>
+                <p className="text-gray-600 text-lg">Live scores and standings</p>
             </div>
 
-            {/* Leaderboard Cards */}
-            <div className="grid gap-6">
-                {loading ? (
-                    <div className="text-center py-12 text-gray-500">Loading standings...</div>
-                ) : leaderboard.length === 0 ? (
-                    <div className="text-center py-12 text-gray-500">No teams registered yet.</div>
-                ) : (
-                    leaderboard.map((team, index) => (
-                        <div
-                            key={team.id}
-                            className={`relative bg-white rounded-2xl p-6 flex items-center gap-6 transition-all transform hover:-translate-y-1 hover:shadow-xl border ${index === 0 ? "border-yellow-200 shadow-yellow-100 shadow-lg" : "border-gray-100 shadow-sm"}`}
-                        >
-                            <div className="w-16 flex justify-center">{getRankIcon(index)}</div>
-
-                            <div className="flex-1">
-                                <h3 className="text-2xl font-bold text-gray-900">{team.name}</h3>
-                                <div className="flex gap-4 mt-1 text-sm text-gray-500">
-                                    <span className="flex items-center gap-1"><Star size={14} className="text-blue-500" /> Tech: {team.techScore}</span>
-                                    <span className="flex items-center gap-1"><Activity size={14} className="text-green-500" /> Non-Tech: {team.nonTechScore}</span>
-                                </div>
-                            </div>
-
-                            <div className="text-right">
-                                <div className="text-4xl font-black text-gray-900">{team.totalScore}</div>
-                                <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">Points</div>
-                            </div>
-
-                            {index === 0 && (
-                                <div className="absolute -top-3 -right-3 bg-yellow-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg flex items-center gap-1">
-                                    <TrendingUp size={12} /> LEADER
-                                </div>
-                            )}
-                        </div>
-                    ))
-                )}
+            {/* Competition Tabs */}
+            <div className="flex flex-wrap justify-center gap-2 mb-8">
+                {competitions.map(comp => (
+                    <button
+                        key={comp.id}
+                        onClick={() => setSelectedComp(comp.id)}
+                        className={`px-6 py-2 rounded-full font-medium transition-all ${selectedComp === comp.id
+                            ? "bg-blue-600 text-white shadow-lg scale-105"
+                            : "bg-white text-gray-600 hover:bg-gray-100 border border-gray-200"
+                            }`}
+                    >
+                        {comp.name}
+                    </button>
+                ))}
             </div>
 
-            {/* Recent Competitions Table */}
-            <div className="mt-16">
-                <h2 className="text-2xl font-bold text-gray-800 mb-6">Competition Details</h2>
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left">
-                            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-                                <tr>
-                                    <th className="px-6 py-4">Competition</th>
-                                    <th className="px-6 py-4">Type</th>
-                                    {leaderboard.map(team => (
-                                        <th key={team.id} className="px-6 py-4 text-center whitespace-nowrap">{team.name}</th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {competitions.map(comp => (
-                                    <tr key={comp.id} className="hover:bg-gray-50">
-                                        <td className="px-6 py-4 font-medium text-gray-900">{comp.name}</td>
-                                        <td className="px-6 py-4">
-                                            <span className={`px-2 py-1 rounded text-xs font-bold ${comp.type === "TECHNICAL" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>
-                                                {comp.type}
-                                            </span>
-                                        </td>
-                                        {leaderboard.map(team => (
-                                            <td key={team.id} className="px-6 py-4 text-center text-gray-600 font-mono">
-                                                {comp.scores?.[team.id] || "-"}
-                                            </td>
-                                        ))}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+            {/* Leaderboard Table */}
+            {selectedComp && currentLeaderboard.length > 0 ? (
+                <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100 max-w-4xl mx-auto">
+                    <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-4 md:p-6 text-white text-center">
+                        <h2 className="text-xl md:text-2xl font-bold flex items-center justify-center gap-2">
+                            <Trophy className="text-yellow-400 w-6 h-6" />
+                            {competitions.find(c => c.id === selectedComp)?.name}
+                        </h2>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                        {currentLeaderboard.map((entry, index) => (
+                            <div
+                                key={entry.teamId}
+                                className={`p-4 flex items-center justify-between transition-colors
+                                ${index === 0 ? "bg-yellow-50/50" : index === 1 ? "bg-gray-50/50" : index === 2 ? "bg-orange-50/50" : "hover:bg-gray-50"}
+                                `}
+                            >
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shadow-sm border
+                                        ${index === 0 ? "bg-yellow-100 text-yellow-700 border-yellow-200" :
+                                            index === 1 ? "bg-gray-100 text-gray-700 border-gray-200" :
+                                                index === 2 ? "bg-orange-100 text-orange-700 border-orange-200" : "bg-white text-gray-500 border-gray-100"}`}>
+                                        {index + 1}
+                                    </div>
+                                    <div>
+                                        <h3 className={`font-bold text-gray-900 ${index < 3 ? "text-lg" : "text-base"}`}>{entry.teamName}</h3>
+                                        {index === 0 && <span className="text-[10px] text-yellow-600 font-bold uppercase tracking-wider flex items-center gap-1 mt-0.5"><Crown size={10} /> Leader</span>}
+                                    </div>
+                                </div>
+                                <div className={`font-mono font-bold ${index < 3 ? "text-2xl text-blue-600" : "text-xl text-gray-600"}`}>
+                                    {entry.score}
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 </div>
-            </div>
+            ) : (
+                <div className="text-center py-12 text-gray-500 bg-white rounded-xl shadow-sm max-w-2xl mx-auto">
+                    No scores available for this competition yet.
+                </div>
+            )}
         </div>
     );
 }

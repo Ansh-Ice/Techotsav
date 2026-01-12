@@ -17,19 +17,10 @@ export function AuthProvider({ children }) {
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
-                // Check if user is admin
-                const adminDoc = await getDoc(doc(db, "admins", user.email)); // simplistic check, assumes email is doc Id or we query
-                // detailed check:
-                // ideally we store admin emails as docs in 'admins' collection
-                // or we just check if the email exists in 'admins' collection
-                // for "vibe coding" speed: let's assume if they can login, they are authenticated. 
-                // But the requirement says "Only ADMIN login exists".
-                // We will enforce that via Firestore rules and here.
-
-                // Let's assume we check a "admins" collection where doc ID is email, or a query.
-                // For now, let's just set User.
+                // In this app, only ADMIN uses Firebase Auth. 
+                // Guests are unauthenticated.
                 setCurrentUser(user);
-                setIsAdmin(true); // TODO: Implement actual admin check if needed beyond just "can login"
+                setIsAdmin(true);
             } else {
                 setCurrentUser(null);
                 setIsAdmin(false);
