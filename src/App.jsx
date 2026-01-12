@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import AdminLayout from "./layouts/AdminLayout";
 import PublicLayout from "./layouts/PublicLayout";
+import Login from "./pages/Login";
 
 // Placeholder Pages
 const Dashboard = () => <div className="text-2xl font-bold">Admin Dashboard</div>;
@@ -10,7 +11,6 @@ const Teams = () => <div className="text-2xl font-bold">Manage Teams</div>;
 const Competitions = () => <div className="text-2xl font-bold">Manage Competitions</div>;
 
 const Leaderboard = () => <div className="text-2xl font-bold">Leaderboard View (Guests)</div>;
-const Login = () => <div className="p-8"><h1 className="text-2xl font-bold mb-4">Admin Login</h1><p>Login form goes here...</p></div>;
 
 function App() {
   return (
