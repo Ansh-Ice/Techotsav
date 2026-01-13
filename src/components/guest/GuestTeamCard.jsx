@@ -10,6 +10,14 @@ export default function GuestTeamCard({ team, members = [] }) {
     // It also says "OWNER (highlighted)".
     // We'll assume the passed 'members' array contains the player details + bid info.
 
+    // Sort members: OWNER first, then ICON, then others
+    const sortedMembers = [...members].sort((a, b) => {
+        const roleOrder = { "OWNER": 1, "ICON": 2, "MEMBER": 3 };
+        const orderA = roleOrder[a.role] || 4;
+        const orderB = roleOrder[b.role] || 4;
+        return orderA - orderB;
+    });
+
     return (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-4">
             {/* Team Header Card */}
@@ -27,10 +35,33 @@ export default function GuestTeamCard({ team, members = [] }) {
                         <div>
                             <h3 className="font-bold text-gray-900 leading-tight">{team.name}</h3>
                             <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
-                                <span className="flex items-center gap-1">
-                                    <User className="w-3 h-3" />
-                                    {team.ownerName || "No Owner"}
-                                </span>
+                                {(() => {
+                                    // Derive owner from members list
+                                    const owner = members.find(m => m.role === 'OWNER');
+                                    return (
+                                        <span className="flex items-center gap-2">
+                                            {owner ? (
+                                                <>
+                                                    {owner.photoUrl ? (
+                                                        <img
+                                                            src={owner.photoUrl}
+                                                            alt={owner.name}
+                                                            className="w-5 h-5 rounded-full object-cover border border-gray-200"
+                                                        />
+                                                    ) : (
+                                                        <User className="w-3 h-3" />
+                                                    )}
+                                                    <span className="font-medium text-gray-800">{owner.name}</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <User className="w-3 h-3 text-gray-400" />
+                                                    <span className="text-gray-400 italic">Owner not assigned yet</span>
+                                                </>
+                                            )}
+                                        </span>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>
@@ -57,15 +88,15 @@ export default function GuestTeamCard({ team, members = [] }) {
             {/* Collapsible Members List */}
             {isExpanded && (
                 <div className="bg-gray-50 px-3 py-2 space-y-2 border-t border-gray-100">
-                    {members.length > 0 ? (
-                        members.map((member) => {
+                    {sortedMembers.length > 0 ? (
+                        sortedMembers.map((member) => {
                             const isOwner = member.role === "OWNER";
                             const isIcon = member.role === "ICON";
 
                             return (
                                 <div key={member.id} className={`p-2 rounded-lg border flex items-center justify-between shadow-sm ${isOwner ? "bg-purple-50 border-purple-200" :
-                                        isIcon ? "bg-blue-50 border-blue-200" :
-                                            "bg-white border-gray-200"
+                                    isIcon ? "bg-blue-50 border-blue-200" :
+                                        "bg-white border-gray-200"
                                     }`}>
                                     <div className="flex items-center gap-3">
                                         {/* Player Photo/Avatar */}
@@ -82,8 +113,8 @@ export default function GuestTeamCard({ team, members = [] }) {
                                         <div>
                                             <div className="flex items-center gap-2">
                                                 <p className={`font-semibold text-sm ${isOwner ? "text-purple-900" :
-                                                        isIcon ? "text-blue-900" :
-                                                            "text-gray-900"
+                                                    isIcon ? "text-blue-900" :
+                                                        "text-gray-900"
                                                     }`}>
                                                     {member.name}
                                                 </p>
