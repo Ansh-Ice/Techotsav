@@ -5,7 +5,7 @@ service cloud.firestore {
     // Ideally: exists(/databases/$(database)/documents/admins/$(request.auth.token.email))
     // For now: Just trust authenticated users (since we only show login to admins)
     function isAdmin() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.email == "22bmiit046@gmail.com";
     }
 
     match /admins/{email} {
